@@ -1,0 +1,120 @@
+diff --git a/target/linux/mediatek/filogic/base-files/etc/board.d/02_network b/target/linux/mediatek/filogic/base-files/etc/board.d/02_network
+index 848492a..d73e15e 100644
+--- a/target/linux/mediatek/filogic/base-files/etc/board.d/02_network
++++ b/target/linux/mediatek/filogic/base-files/etc/board.d/02_network
+@@ -57,6 +57,7 @@ mediatek_setup_interfaces()
+ 	keenetic,kn-3811|\
+ 	netis,nx32u|\
+ 	qihoo,360t7|\
++	philips,hy3000|\
+ 	routerich,ax3000|\
+ 	routerich,ax3000-ubootmod|\
+ 	routerich,be7200|\
+diff --git a/package/boot/uboot-mediatek/Makefile b/package/boot/uboot-mediatek/Makefile
+index 78932ea..b454792 100644
+--- a/package/boot/uboot-mediatek/Makefile
++++ b/package/boot/uboot-mediatek/Makefile
+@@ -291,6 +291,19 @@ define U-Boot/mt7981_cmcc_rax3000m-nand-ddr4
+   DEPENDS:=+trusted-firmware-a-mt7981-spim-nand-ddr4
+ endef
+
++define U-Boot/mt7981_philips_hy3000
++  NAME:=PHILIPS HY3000
++  BUILD_SUBTARGET:=filogic
++  BUILD_DEVICES:=philips_hy3000
++  UBOOT_CONFIG:=mt7981_philips_hy3000
++  UBOOT_IMAGE:=u-boot.fip
++  ENV_NAME:=philips_hy3000
++  BL2_BOOTDEV:=emmc
++  BL2_SOC:=mt7981
++  BL2_DDRTYPE:=ddr4
++  DEPENDS:=+trusted-firmware-a-mt7981-emmc-ddr4
++endef
++
+ define U-Boot/mt7981_comfast_cf-wr632ax
+   NAME:=COMFAST CF-WR632AX
+   BUILD_SUBTARGET:=filogic
+@@ -1111,6 +1124,7 @@ UBOOT_TARGETS := \
+ 	mt7981_cmcc_rax3000m-emmc-ddr4 \
+ 	mt7981_cmcc_rax3000m-nand-ddr3 \
+ 	mt7981_cmcc_rax3000m-nand-ddr4 \
++	mt7981_philips_hy3000 \
+ 	mt7981_comfast_cf-wr632ax \
+ 	mt7981_cudy_tr3000-v1 \
+ 	mt7981_cudy_wbr3000uax-v1 \
+diff --git a/package/boot/uboot-tools/uboot-envtools/files/mediatek_filogic b/package/boot/uboot-tools/uboot-envtools/files/mediatek_filogic
+index 5972233..12eddd3 100644
+--- a/package/boot/uboot-tools/uboot-envtools/files/mediatek_filogic
++++ b/package/boot/uboot-tools/uboot-envtools/files/mediatek_filogic
+@@ -83,6 +83,7 @@ bananapi,bpi-r4|\
+ bananapi,bpi-r4-lite|\
+ bananapi,bpi-r4-poe|\
+ cmcc,rax3000m|\
++philips,hy3000|\
+ jdcloud,re-cp-03)
+ 	. /lib/upgrade/fit.sh
+ 	export_fitblk_bootdev
+diff --git a/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh b/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
+index dde54a0..e7bb6ce 100644
+--- a/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
++++ b/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
+@@ -89,6 +89,7 @@ platform_do_upgrade() {
+ 	bananapi,bpi-r4-lite|\
+ 	cmcc,a10-ubootmod|\
+ 	cmcc,rax3000m|\
++	philips,hy3000|\
+ 	comfast,cf-wr632ax-ubootmod|\
+ 	cudy,tr3000-v1-ubootmod|\
+ 	cudy,wbr3000uax-v1-ubootmod|\
+@@ -280,6 +281,7 @@ platform_check_image() {
+ 	bananapi,bpi-r4-lite|\
+ 	cmcc,a10-ubootmod|\
+ 	cmcc,rax3000m|\
++	philips,hy3000|\
+ 	comfast,cf-wr632ax-ubootmod|\
+ 	cudy,tr3000-v1-ubootmod|\
+ 	cudy,wbr3000uax-v1-ubootmod|\
+@@ -338,6 +340,7 @@ platform_copy_config() {
+ 	bananapi,bpi-r4-poe|\
+ 	bananapi,bpi-r4-lite|\
+ 	cmcc,rax3000m|\
++	philips,hy3000|\
+ 	gatonetworks,gdsp|\
+ 	mediatek,mt7988a-rfb)
+ 		if [ "$CI_METHOD" = "emmc" ]; then
+diff --git a/target/linux/mediatek/image/filogic.mk b/target/linux/mediatek/image/filogic.mk
+index bd320ab..acfbf23 100644
+--- a/target/linux/mediatek/image/filogic.mk
++++ b/target/linux/mediatek/image/filogic.mk
+@@ -906,6 +906,31 @@ define Device/cmcc_rax3000m
+ endef
+ TARGET_DEVICES += cmcc_rax3000m
+
++define Device/philips_hy3000
++  DEVICE_VENDOR := PHILIPS
++  DEVICE_MODEL := HY3000
++  DEVICE_DTS := mt7981b-philips-hy3000
++  DEVICE_DTS_DIR := ../dts
++  DEVICE_DTC_FLAGS := --pad 4096
++  DEVICE_DTS_LOADADDR := 0x43f00000
++  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware f2fsck mkf2fs
++  KERNEL_LOADADDR := 0x44000000
++  KERNEL := kernel-bin | gzip
++  KERNEL_INITRAMFS := kernel-bin | lzma | \
++	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
++  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
++  IMAGES := sysupgrade.itb
++  IMAGE_SIZE := $$(shell expr 64 + $$(CONFIG_TARGET_ROOTFS_PARTSIZE))m
++  IMAGE/sysupgrade.itb := append-kernel | \
++	 fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
++	 pad-rootfs | append-metadata
++  ARTIFACTS := gpt.bin bl31-uboot.fip preloader.bin
++  ARTIFACT/gpt.bin := mt798x-gpt emmc
++  ARTIFACT/bl31-uboot.fip := mt7981-bl31-uboot philips_hy3000
++  ARTIFACT/preloader.bin  := mt7981-bl2 emmc-ddr4
++endef
++TARGET_DEVICES += philips_hy3000
++
+ define Device/comfast_cf-e393ax
+   DEVICE_VENDOR := COMFAST
+   DEVICE_MODEL := CF-E393AX

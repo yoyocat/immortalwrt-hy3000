@@ -1,0 +1,155 @@
+name: Build ImmortalWrt HY3000
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_docker:
+        description: 'Include Docker support'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.10
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint \
+            binutils bison build-essential bzip2 ccache clang cmake cpio curl \
+            device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+            git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev \
+            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
+            libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool llvm lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch \
+            pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync \
+            scons squashfs-tools subversion swig texinfo uglifyjs unzip vim wget \
+            xmlto xxd zlib1g-dev
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          sudo timedatectl set-timezone "$TZ"
+
+      - name: Clone ImmortalWrt source
+        run: |
+          df -hT $PWD
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+          ln -sf $GITHUB_WORKSPACE/openwrt /workdir
+          echo "Source cloned."
+
+      - name: Run diy-part1.sh (before feeds)
+        run: |
+          chmod +x diy-part1.sh
+          cd openwrt
+          $GITHUB_WORKSPACE/diy-part1.sh
+
+      - name: Update & install feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Run diy-part2.sh (apply HY3000 patches)
+        run: |
+          chmod +x diy-part2.sh
+          cd openwrt
+          $GITHUB_WORKSPACE/diy-part2.sh
+
+      - name: Load .config
+        run: |
+          cp .config openwrt/.config
+          if [ "${{ github.event.inputs.with_docker }}" = "true" ]; then
+            echo "CONFIG_PACKAGE_dockerd=y" >> openwrt/.config
+            echo "CONFIG_PACKAGE_luci-app-dockerman=y" >> openwrt/.config
+            echo "CONFIG_PACKAGE_docker-compose=y" >> openwrt/.config
+          fi
+          cd openwrt
+          make defconfig
+          echo "=== Final config (key items) ==="
+          grep -E "BTF|BPF|dae|philips|ROOTFS_PARTSIZE" .config
+
+      - name: Download packages
+        run: |
+          cd openwrt
+          make download -j$(nproc)
+          find dl -size -1024c -exec rm -f {} \;
+          echo "Download complete."
+
+      - name: Compile firmware
+        id: compile
+        run: |
+          cd openwrt
+          echo "Compiling with $(nproc) threads..."
+          make -j$(nproc) 2>&1 | tail -20 || make -j1 V=s 2>&1 | tail -100
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "=== Output files ==="
+          ls -lh bin/targets/mediatek/filogic/
+
+      - name: Organize output
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          cd openwrt/bin/targets/mediatek/filogic/
+          # Keep only important files
+          rm -f packages sha256sums *.buildinfo *.manifest
+          echo "=== Firmware files ==="
+          ls -lh
+
+      - name: Generate release tag
+        id: tag
+        run: |
+          echo "tag=hy3000-$(date +"%Y%m%d-%H%M")" >> $GITHUB_OUTPUT
+          echo "date=$(date +"%Y-%m-%d %H:%M")" >> $GITHUB_OUTPUT
+
+      - name: Upload firmware to release
+        if: steps.compile.outputs.status == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "HY3000 ImmortalWrt 24.10 (${{ steps.tag.outputs.date }})"
+          body: |
+            ## Philips HY3000 - ImmortalWrt 24.10 with BTF/dae support
+
+            **Features:**
+            - ImmortalWrt 24.10 (kernel 6.6)
+            - BTF/eBPF enabled for dae support
+            - daed + luci-app-daed pre-installed
+            - WiFi MT7915E (2.4G + 5G)
+            - eMMC boot
+
+            **Flash guide:**
+            1. Download `*-recovery.itb` for initial install via TFTP
+            2. Download `*-sysupgrade.itb` for upgrading from existing ImmortalWrt/iStoreOS
+          files: openwrt/bin/targets/mediatek/filogic/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload firmware as artifact (backup)
+        if: steps.compile.outputs.status == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-hy3000-firmware
+          path: openwrt/bin/targets/mediatek/filogic/
