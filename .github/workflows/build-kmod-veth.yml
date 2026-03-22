@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-6.6
-  REPO_BRANCH: openwrt-24.10-6.6
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.10
   TZ: Asia/Shanghai
 
 jobs:
@@ -43,13 +43,14 @@ jobs:
           sudo -E apt-get -qq clean
           sudo timedatectl set-timezone "$TZ"
 
-      - name: Clone source (same commit as your build on Mar 13)
+      - name: Clone source
         run: |
-          git clone $REPO_URL -b $REPO_BRANCH openwrt
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
           cd openwrt
-          git checkout 4c657c9354
-          echo "Pinned to commit:"
+          echo "Source commit:"
           git log --oneline -1
+          echo "Kernel version:"
+          cat include/kernel-6.6
 
       - name: Enable CONFIG_VETH=m
         run: |
@@ -59,14 +60,12 @@ jobs:
           echo "VETH config:"
           grep VETH target/linux/generic/config-6.6
 
-      - name: Configure for Philips HY3000
+      - name: Configure for mediatek filogic
         run: |
           cd openwrt
-          # Minimal .config - same target as your build
           cat > .config << 'EOF'
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
-          CONFIG_TARGET_mediatek_filogic_DEVICE_philips_hy3000=y
           CONFIG_PACKAGE_kmod-veth=y
           EOF
           make defconfig
