@@ -55,15 +55,25 @@ jobs:
           bash add-hy3000.sh openwrt $GITHUB_WORKSPACE/patches
 
       - name: Update and install feeds
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd openwrt
           # Fix git auth for CI
           git config --global url."https://github.com/".insteadOf "git://github.com/"
-          ./scripts/feeds update -a || {
-            echo "iStore feed failed, removing and retrying..."
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          # Retry feeds update up to 3 times
+          ok=0
+          for i in 1 2 3; do
+            ./scripts/feeds update -a && ok=1 && break || sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "feeds update failed; trying manual istore clone"
+            rm -rf feeds/istore
+            git clone --depth=1 https://x-access-token:${GITHUB_TOKEN}@github.com/istoreos/istore.git feeds/istore || true
             sed -i '/istore/d' feeds.conf.default
             ./scripts/feeds update -a
-          }
+          fi
           ./scripts/feeds install -a
           ./scripts/feeds install luci-app-store 2>/dev/null || true
 
