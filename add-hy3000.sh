@@ -90,16 +90,10 @@ fi
 # Enable VETH
 sed -i 's/# CONFIG_VETH is not set/CONFIG_VETH=m/' target/linux/generic/config-6.6
 
-# Add iStore feed (use https with .git suffix for CI compatibility)
-if ! grep -q istore feeds.conf.default; then
-    echo 'src-git istore https://github.com/istoreos/istore.git;main' >> feeds.conf.default
-fi
-
 echo "=== Verification ==="
 grep -c "philips" target/linux/mediatek/image/filogic.mk
 ls target/linux/mediatek/dts/mt7981b-philips-hy3000.dts
 grep VETH target/linux/generic/config-6.6
-grep istore feeds.conf.default
 ls package/boot/uboot-mediatek/patches/471-add-philips_hy3000.patch
 ls package/boot/uboot-mediatek/configs/mt7981_philips_hy3000_defconfig
 ls package/boot/uboot-mediatek/defenvs/philips_hy3000_env
