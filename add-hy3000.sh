@@ -71,6 +71,22 @@ DEVEOF
     fi
 fi
 
+# Add U-Boot support pieces for flashable images
+mkdir -p package/boot/uboot-mediatek/patches
+mkdir -p package/boot/uboot-mediatek/files
+mkdir -p package/boot/uboot-mediatek/env
+mkdir -p package/boot/uboot-mediatek/configs
+mkdir -p package/boot/uboot-mediatek/defenvs
+
+cp -f "$PATCHDIR/471-add-philips_hy3000.patch" package/boot/uboot-mediatek/patches/
+cp -f "$PATCHDIR/mt7981_philips_hy3000_defconfig" package/boot/uboot-mediatek/configs/
+cp -f "$PATCHDIR/philips_hy3000_env" package/boot/uboot-mediatek/defenvs/
+
+if [ -f package/boot/uboot-mediatek/Makefile ] && ! grep -q "mt7981_philips_hy3000" package/boot/uboot-mediatek/Makefile; then
+    sed -i '/^define U-Boot\/mt7981_cmcc_rax3000m-nand-ddr4/a\\ndefine U-Boot/mt7981_philips_hy3000\n  NAME:=PHILIPS HY3000\n  BUILD_SUBTARGET:=filogic\n  BUILD_DEVICES:=philips_hy3000\n  UBOOT_CONFIG:=mt7981_philips_hy3000\n  UBOOT_IMAGE:=u-boot.fip\n  ENV_NAME:=philips_hy3000\n  BL2_BOOTDEV:=emmc\n  BL2_SOC:=mt7981\n  BL2_DDRTYPE:=ddr4\n  DEPENDS:=+trusted-firmware-a-mt7981-emmc-ddr4\nendef\n' package/boot/uboot-mediatek/Makefile || true
+    sed -i '/mt7981_cmcc_rax3000m-nand-ddr4 \\/a\\tmt7981_philips_hy3000 \\' package/boot/uboot-mediatek/Makefile || true
+fi
+
 # Enable VETH
 sed -i 's/# CONFIG_VETH is not set/CONFIG_VETH=m/' target/linux/generic/config-6.6
 
@@ -84,4 +100,7 @@ grep -c "philips" target/linux/mediatek/image/filogic.mk
 ls target/linux/mediatek/dts/mt7981b-philips-hy3000.dts
 grep VETH target/linux/generic/config-6.6
 grep istore feeds.conf.default
+ls package/boot/uboot-mediatek/patches/471-add-philips_hy3000.patch
+ls package/boot/uboot-mediatek/configs/mt7981_philips_hy3000_defconfig
+ls package/boot/uboot-mediatek/defenvs/philips_hy3000_env
 echo "=== All done ==="
