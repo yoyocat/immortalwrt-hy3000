@@ -42,8 +42,8 @@ jobs:
       - name: Add HY3000 device support
         run: |
           cd openwrt
-          # Copy DTS
-          cp $GITHUB_WORKSPACE/patches/mt7981b-philips-hy3000.dts target/linux/mediatek/dts/
+          # Copy iStoreOS-compatible DTS
+          cp $GITHUB_WORKSPACE/patches/mt7981b-philips-hy3000-istoreos.dts target/linux/mediatek/dts/mt7981b-philips-hy3000.dts
 
           # Add device definition to filogic.mk (iStoreOS uses sysupgrade-tar format)
           if ! grep -q "philips_hy3000" target/linux/mediatek/image/filogic.mk; then
