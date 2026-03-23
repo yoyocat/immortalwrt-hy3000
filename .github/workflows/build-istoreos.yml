@@ -1,0 +1,181 @@
+name: Build iStoreOS HY3000 with BTF+daed
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool llvm lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs unzip vim wget xmlto xxd zlib1g-dev npm
+          sudo npm install -g pnpm || true
+
+      - name: Clone iStoreOS official source
+        run: |
+          git clone --depth=1 https://github.com/istoreos/istoreos.git -b istoreos-24.10 openwrt
+          cd openwrt
+          echo "Commit: $(git log --oneline -1)"
+          echo "Kernel: $(cat include/kernel-6.6)"
+
+      - name: Add HY3000 device support
+        run: |
+          cd openwrt
+          # Copy DTS
+          cp $GITHUB_WORKSPACE/patches/mt7981b-philips-hy3000.dts target/linux/mediatek/dts/
+
+          # Add device definition to filogic.mk (iStoreOS uses sysupgrade-tar format)
+          if ! grep -q "philips_hy3000" target/linux/mediatek/image/filogic.mk; then
+            cat >> target/linux/mediatek/image/filogic.mk << 'DEVEOF'
+
+          define Device/philips_hy3000
+            DEVICE_VENDOR := Philips
+            DEVICE_MODEL := HY3000
+            DEVICE_DTS := mt7981b-philips-hy3000
+            DEVICE_DTS_DIR := ../dts
+            DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware \
+          	kmod-usb3 f2fsck mkf2fs
+            SUPPORTED_DEVICES += philips,hy3000
+            KERNEL := kernel-bin | lzma | fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb
+            KERNEL_INITRAMFS := kernel-bin | lzma | \
+          	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
+            IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+          endef
+          TARGET_DEVICES += philips_hy3000
+          DEVEOF
+            echo "filogic.mk: HY3000 added"
+          fi
+
+          # 02_network
+          if ! grep -q "philips,hy3000" target/linux/mediatek/filogic/base-files/etc/board.d/02_network; then
+            sed -i '/qihoo,360t7|\\$/a\\tphilips,hy3000|\\' \
+              target/linux/mediatek/filogic/base-files/etc/board.d/02_network
+            echo "02_network: patched"
+          fi
+
+          # platform.sh
+          if ! grep -q "philips,hy3000" target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh; then
+            sed -i '/cmcc,rax3000m|\\$/a\\tphilips,hy3000|\\' \
+              target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
+            echo "platform.sh: patched"
+          fi
+
+          # Enable VETH + BTF in kernel config
+          sed -i 's/# CONFIG_VETH is not set/CONFIG_VETH=m/' target/linux/generic/config-6.6
+          sed -i 's/# CONFIG_DEBUG_INFO_BTF is not set/CONFIG_DEBUG_INFO_BTF=y/' target/linux/generic/config-6.6
+
+          echo "=== Verify ==="
+          grep "philips_hy3000" target/linux/mediatek/image/filogic.mk | head -3
+          grep "philips,hy3000" target/linux/mediatek/filogic/base-files/etc/board.d/02_network | head -1
+          ls target/linux/mediatek/dts/mt7981b-philips-hy3000.dts
+          grep CONFIG_VETH target/linux/generic/config-6.6
+          grep CONFIG_DEBUG_INFO_BTF target/linux/generic/config-6.6
+
+      - name: Update and install feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Add daed package
+        run: |
+          cd openwrt
+          git clone --depth=1 https://github.com/QiuSimons/luci-app-daed.git package/dae
+
+      - name: Write config
+        run: |
+          cd openwrt
+          cat > .config << 'EOF'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_mediatek_filogic_DEVICE_philips_hy3000=y
+          CONFIG_DEVEL=y
+          CONFIG_KERNEL_DEBUG_INFO=y
+          # CONFIG_KERNEL_DEBUG_INFO_REDUCED is not set
+          CONFIG_KERNEL_DEBUG_INFO_BTF=y
+          CONFIG_KERNEL_MODULE_ALLOW_BTF_MISMATCH=y
+          CONFIG_KERNEL_CGROUPS=y
+          CONFIG_KERNEL_CGROUP_BPF=y
+          CONFIG_KERNEL_BPF_EVENTS=y
+          CONFIG_BPF_TOOLCHAIN_HOST=y
+          CONFIG_KERNEL_XDP_SOCKETS=y
+          CONFIG_PACKAGE_kmod-xdp-sockets-diag=y
+          CONFIG_PACKAGE_kmod-veth=y
+          CONFIG_PACKAGE_daed=y
+          CONFIG_PACKAGE_luci-app-daed=y
+          CONFIG_PACKAGE_luci-i18n-daed-zh-cn=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+          CONFIG_PACKAGE_htop=y
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_wget-ssl=y
+          CONFIG_PACKAGE_openssh-sftp-server=y
+          CONFIG_PACKAGE_kmod-usb3=y
+          CONFIG_PACKAGE_kmod-usb-storage=y
+          CONFIG_PACKAGE_block-mount=y
+          CONFIG_PACKAGE_f2fsck=y
+          CONFIG_PACKAGE_mkf2fs=y
+          CONFIG_PACKAGE_kmod-mt7915e=y
+          CONFIG_PACKAGE_kmod-mt7981-firmware=y
+          CONFIG_PACKAGE_mt7981-wo-firmware=y
+          CONFIG_PACKAGE_wpad-openssl=y
+          CONFIG_TARGET_ROOTFS_PARTSIZE=512
+          CONFIG_TARGET_ROOTFS_SQUASHFS=y
+          EOF
+          make defconfig
+          echo "=== Key config ==="
+          grep -E "BTF|dae|VETH|philips|ROOTFS" .config | head -20
+
+      - name: Download
+        run: cd openwrt && make download -j$(nproc) && find dl -size -1024c -exec rm -f {} \;
+
+      - name: Compile
+        run: |
+          cd openwrt
+          make -j$(nproc) || make -j1 V=s 2>&1 | tail -300
+          echo "=== Output ==="
+          ls -lh bin/targets/mediatek/filogic/
+          ls -lh bin/targets/mediatek/filogic/*hy3000* 2>/dev/null || echo "No HY3000 images found"
+
+      - name: Upload release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: istoreos-hy3000-btf-${{ github.run_number }}
+          name: iStoreOS HY3000 + BTF/daed
+          body: |
+            iStoreOS 24.10 for Philips HY3000 with BTF+daed
+            - Based on official istoreos/istoreos source
+            - BTF/eBPF enabled for dae
+            - daed + luci-app-daed included
+            - sysupgrade from current iStoreOS
+          files: bin/targets/mediatek/filogic/*
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: istoreos-hy3000-btf-daed
+          path: bin/targets/mediatek/filogic/
